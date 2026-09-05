@@ -149,6 +149,40 @@ That matters for two reasons:
 The proxy also sends the request to the backend with `stream=True` (see [main.py](main.py)),
 so neither side buffers the whole body — the connection stays a continuous stream end to end.
 
+### What is round robin, and how does this app use it?
+
+**Round robin just means "take turns."** Each request is sent to the *next* backend in the
+list, and when you reach the end you wrap back to the start. That way no single backend gets
+all the traffic — each one handles a roughly equal share.
+
+Here is the part of [main.py](main.py) that does it:
+
+```python
+_current_backend = 0                 # whose turn is it next
+
+backend = BACKENDS[_current_backend % len(BACKENDS)]   # pick the current turn
+_current_backend = (_current_backend + 1) % len(BACKENDS)  # advance to the next turn
+```
+
+Two ideas make this work:
+
+- A counter (`_current_backend`) remembers whose turn it is. After every request it moves to
+  the next backend.
+- The `%` (**modulo**) operator does the wrap-around. When the counter would go past the last
+  backend, `len(BACKENDS)` wraps it back to `0`, so the rotation restarts from the top.
+
+Round robin also works hand-in-hand with the health checks:
+
+- The list it rotates through (`BACKENDS`) only contains the backends that passed their last
+  health check, in the same order they were configured. A backend that is down is never even
+  considered, because it isn't in that list.
+- When a backend recovers, it is added back to `BACKENDS` and automatically starts receiving
+  its share of requests again.
+
+So the three FAQs connect like this: `api_route` is how the proxy **accepts** any request,
+round robin is how it **chooses** which healthy backend to send it to, and `StreamingResponse`
+is how the backend's reply **flows back** to the client.
+
 ## File layout
 
 ```
